@@ -81,23 +81,24 @@
 
 // Define GPIO mode options
 
-#define GPIO_SHIFT0   0
-#define GPIO_SHIFT1   1
-#define GPIO_SHIFT2   2
-#define GPIO_SHIFT3   3
-#define GPIO_SHIFT4   4
-#define GPIO_SHIFT5   5
-#define GPIO_SHIFT6   6
-#define GPIO_SHIFT7   7
-#define GPIO_SHIFT8   8
-#define GPIO_SHIFT9   9
-#define GPIO_SHIFT10 10
-#define GPIO_SHIFT11 11
-#define GPIO_SHIFT12 12
-#define GPIO_SHIFT13 13
-#define GPIO_MAP     14
-#define GPIO_DIRECT   15
-#define GPIO_IOEXPAND 16
+#define GPIO_SHIFT0     0
+#define GPIO_SHIFT1     1
+#define GPIO_SHIFT2     2
+#define GPIO_SHIFT3     3
+#define GPIO_SHIFT4     4
+#define GPIO_SHIFT5     5
+#define GPIO_SHIFT6     6
+#define GPIO_SHIFT7     7
+#define GPIO_SHIFT8     8
+#define GPIO_SHIFT9     9
+#define GPIO_SHIFT10    10
+#define GPIO_SHIFT11    11
+#define GPIO_SHIFT12    12
+#define GPIO_SHIFT13    13
+#define GPIO_MAP        14
+#define GPIO_DIRECT     15
+#define GPIO_IOEXPAND   16
+#define GPIO_PIO_SHIFT  17
 
 // Define timer allocations.
 

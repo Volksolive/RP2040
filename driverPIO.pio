@@ -59,7 +59,7 @@ delay:
     out pins, 6
  pulse:
     jmp x-- pulse
-    out pins, 6
+    set pins, 0
 
 % c-sdk {
 static inline void step_pulse_program_init(PIO pio, uint sm, uint offset, uint32_t startPin, uint pinCount) {
@@ -67,13 +67,13 @@ static inline void step_pulse_program_init(PIO pio, uint sm, uint offset, uint32
 
     // Map the state machine's OUT pin group to the provided pin in pin count in parameters
     sm_config_set_out_pins(&c, startPin, pinCount);
+    // Set the set pins group to the same pins as the out pins group to reset the pins when the steps are finished
+    sm_config_set_set_pins(&c, startPin, pinCount);
     // Set these pins GPIO function (connect PIO to the pad)
     for(uint i=0;i<pinCount;i++)
         pio_gpio_init(pio, startPin+i);
     // Set the pin direction to output at the PIO
     pio_sm_set_consecutive_pindirs(pio, sm, startPin, pinCount, true);
-    // Set the set pins group to the same pins as the out pins group to reset the pins when the steps are finished
-    sm_config_set_set_pins(&c, startPin, pinCount);
     // Load our configuration, and jump to the start of the program
     pio_sm_init(pio, sm, offset, &c);
     pio_sm_set_clkdiv(pio, sm, 12.5f);
@@ -86,3 +86,55 @@ static inline void step_pulse_generate(PIO pio, uint sm, uint32_t stepPulse) {
 }
 %}
 
+; step serial program shift out step, dir and en signal for 6 Axes
+.program step_shift
+.side_set 2
+
+.wrap_target                    ; Autopull from the FIFO, block execution is the FIFO is empty
+    set x 15 side 0             ; Set scratch register X to number of bit to shift minus 1 
+shift:
+    out pins, 1 side 0          ; Shift one bit from the OSR register to the data pin and reset the clock pin 
+    jmp x-- shift side 1        ; Jump to the previous instruction as long as there is bit to shift and set the clock pin
+    out x, 8 side 2 [1]         ; Put the remaining content of the OSR register in the X register, reset the clock pin and set the STCP pin 
+tempo:
+    jmp x-- tempo side 0  [3]   ; Jump as long as the X register is not empty , each jump takes ~= 0.1 us (1 instruction + 3 delay * 3 clock divider * 8ns clock = 96 ns) 
+.wrap
+
+% c-sdk {
+static inline void step_shift_program_init(PIO pio, uint sm, uint offset, uint8_t dataPin, uint8_t clockPin) {
+    pio_sm_config c = step_pulse_program_get_default_config(offset); 
+
+    // Map the state machine's OUT pin group to the provided data pin in parameters
+    sm_config_set_out_pins(&c, dataPin, 1);
+    // Map the state machine's SIDESET pin group to the provided clock pin in parameters
+    sm_config_set_sideset_pins(&c, clockPin);
+    sm_config_set_sideset(&c, 2, false, false);
+    // Set these pins GPIO function (connect PIO to the pad)
+    pio_gpio_init(pio, dataPin);
+    pio_gpio_init(pio, clockPin);
+    pio_gpio_init(pio, clockPin+1);
+    // Set the pin direction to output at the PIO
+    pio_sm_set_consecutive_pindirs(pio, sm, dataPin, 1, true);
+    pio_sm_set_consecutive_pindirs(pio, sm, clockPin, 2, true);
+    // Activate autopull and set the threshold to 24 (8 bits timing, 6 bits step, 6 bits dir, 4 bits en)
+    sm_config_set_out_shift(&c, true, true, 24);
+    // Set the clock to approx 41.7Mhz
+    sm_config_set_clkdiv(&c, 3.0);
+    // Initialise the pio with the provided config
+    pio_sm_init(pio, sm, offset, &c);
+    // Set the state machine running
+    pio_sm_set_enabled(pio, sm, true);
+}
+
+static inline void stepsShiftOut(PIO pio, uint sm, uint8_t step, uint8_t dir, uint8_t en, uint32_t delay, uint32_t pulse) {
+
+    uint32_t dirData = 0x0000 | (dir<<4) | en;          // The last step data to be shifted, no delay
+    uint32_t stepData = pulse | dirData | (step<<10);   // The second step data to be shifted + 8 bits pulse timing
+    uint32_t dirDataDelay = delay | dirData;            // The first step data to be shifted + 8 bits delay timing
+
+    // send all 3 step data to the PIO FIFO to be shifted 
+    pio_sm_put(pio, sm, (uint32_t)dirDataDelay);         
+    pio_sm_put(pio, sm, (uint32_t)stepData);
+    pio_sm_put(pio, sm, (uint32_t)dirData);
+}
+%}

@@ -90,6 +90,16 @@ typedef union {
     };
 } pio_steps_t;
 
+#if STEPPER_OUTMODE == GPIO_PIO_SHIFT
+typedef struct {
+    uint32_t value;
+    uint32_t delay;
+    uint32_t length; 
+} pio_steps_shift_t;
+
+static pio_steps_shift_t pio_steps_shift = {0, 20, 100};
+#endif
+
 static pio_steps_t pio_steps = { .delay = 20, .length = 100 };
 static uint pulse, timer;
 static uint16_t pulse_length, pulse_delay;
@@ -136,7 +146,7 @@ static const uint32_t c_dir_outmap[] = {
 	B_DIRECTION_BIT,
 	B_DIRECTION_BIT | X_DIRECTION_BIT,
 	B_DIRECTION_BIT | Y_DIRECTION_BIT,
-	B_DIRECTION_BIT | X_DIRECTION_BIT,
+	B_DIRECTION_BIT | Y_DIRECTION_BIT | X_DIRECTION_BIT,
 	B_DIRECTION_BIT | Z_DIRECTION_BIT,
 	B_DIRECTION_BIT | Z_DIRECTION_BIT | X_DIRECTION_BIT,
 	B_DIRECTION_BIT | Z_DIRECTION_BIT | Y_DIRECTION_BIT,
@@ -266,11 +276,13 @@ static void driver_delay (uint32_t ms, delay_callback_ptr callback)
 // Enable/disable stepper motors
 static void stepperEnable (axes_signals_t enable)
 {
-    enable.mask ^= settings.steppers.enable_invert.mask;
+    
 #if TRINAMIC_ENABLE && TRINAMIC_I2C
+    enable.mask ^= settings.steppers.enable_invert.mask;
     axes_signals_t tmc_enable = trinamic_stepper_enable(enable);
 #else
   #if STEPPERS_DISABLE_OUTMODE == GPIO_IOEXPAND
+    enable.mask ^= settings.steppers.enable_invert.mask;
     #ifdef STEPPERS_DISABLEX_PIN
     ioex_out(STEPPERS_DISABLEX_PIN) = enable.x;
     #endif
@@ -278,6 +290,9 @@ static void stepperEnable (axes_signals_t enable)
     ioex_out(STEPPERS_DISABLEZ_PIN) = enable.z;
     #endif
     ioexpand_out(io_expander);
+  #elif STEPPERS_DISABLE_OUTMODE == GPIO_PIO_SHIFT
+    pio_steps_shift.value ^= (settings.steppers.enable_invert.mask << 12) & 0x0000F000;
+    
   #else
     gpio_put(STEPPERS_DISABLE_PIN, enable.x);
   #endif
@@ -308,7 +323,7 @@ static void stepperCyclesPerTick (uint32_t cycles_per_tick)
 // NOTE: step_outbits are: bit0 -> X, bit1 -> Y, bit2 -> Z...
 inline static __attribute__((always_inline)) void stepperSetStepOutputs (axes_signals_t step_outbits)
 {
-    pio_steps.set = step_outbits.mask ^ settings.steppers.step_invert.mask;
+//    pio_steps.set = step_outbits.mask ^ settings.steppers.step_invert.mask;
 
     step_pulse_generate(pio0, 0, pio_steps.value);
 }
@@ -319,8 +334,9 @@ inline static __attribute__((always_inline)) void stepperSetDirOutputs (axes_sig
 {
 #if DIRECTION_OUTMODE == GPIO_MAP
     gpio_put_masked(DIRECTION_MASK, dir_outmap[dir_outbits.mask]);
-#else
-    gpio_put_masked(DIRECTION_MASK, (dir_outbits.mask ^ settings.steppers.dir_invert.mask) << DIRECTION_OUTMODE);
+#elif DIRECTION_OUTMODE != GPIO_PIO_SHIFT
+//    gpio_put_masked(DIRECTION_MASK, (dir_outbits.mask ^ settings.steppers.dir_invert.mask) << DIRECTION_OUTMODE);
+    gpio_put_masked(DIRECTION_MASK, (dir_outbits.mask) << DIRECTION_OUTMODE);
 #endif
 }
 
@@ -333,6 +349,24 @@ static void stepperPulseStart (stepper_t *stepper)
     if(stepper->step_outbits.value)
         stepperSetStepOutputs(stepper->step_outbits);
 }
+
+#if STEPPER_OUTMODE == GPIO_PIO_SHIFT
+// This function send the step data to the pio to shift out the data to the SR
+static void stepperPulseShift(stepper_t *stepper)
+{
+    // The third data to be shifted contains the state of the enable pins, the dir pins and the default value of the step pins
+    uint32_t thirdShift = pio_steps_shift.value ^ (stepper->dir_outbits.value << 6);
+    // The second data to be shifted contains the same value as the third shift + the actual value of the step pins + a 8 bit pulse length
+    uint32_t secondShift = thirdShift | pio_steps_shift.length ^ stepper->step_outbits.value;
+    // The first data to be shifted contains the same value as the third shift + a 8 bit delay
+    uint32_t firstShift = thirdShift | pio_steps_shift.delay;
+    
+    // Send the 3 shift step data to the pio
+    pio_sm_put(pio0, 0, firstShift);
+    pio_sm_put(pio0, 0, secondShift);
+    pio_sm_put(pio0, 0, thirdShift);
+}
+#endif
 
 //*************************  LIMIT  *************************//
 
@@ -731,6 +765,7 @@ void settings_changed (settings_t *settings)
     hal.driver_cap.variable_spindle = settings->spindle.rpm_min < settings->spindle.rpm_max;
 #endif
 
+/*
 #if (DIRECTION_OUTMODE == GPIO_MAP)
     uint8_t i = sizeof(dir_outmap) / sizeof(uint32_t);
     do {
@@ -738,7 +773,7 @@ void settings_changed (settings_t *settings)
         dir_outmap[i] = c_dir_outmap[i ^ settings->steppers.dir_invert.value];
     } while(i);
 #endif
-
+*/
     stepperSetStepOutputs((axes_signals_t){0});
     stepperSetDirOutputs((axes_signals_t){0});
 
@@ -747,10 +782,31 @@ void settings_changed (settings_t *settings)
         // Init of the spindle PWM
         driver_spindle_pwm_init();
 
-        // PIO step parameters init
+#if STEPPER_OUTMODE == GPIO_PIO_SHIFT
+        // pio step shift parameters init
+        pio_steps_shift.length = ((uint32_t)(10.0f * (settings->steppers.pulse_microseconds)) - 1) << 16 & 0x00FF0000;
+        pio_steps_shift.delay = ((uint32_t)(10.0f * (settings->steppers.pulse_delay_microseconds)) - 1) << 16 & 0x00FF0000;
+        pio_steps_shift.value = (settings->steppers.enable_invert.mask << 12) & 0x0000F000;
+        pio_steps_shift.value |= (settings->steppers.dir_invert.mask << 6) & 0x00000FC0;
+        pio_steps_shift.value |= settings->steppers.step_invert.mask & 0x0000003F;
+        pio_sm_put(pio0, 0, pio_steps_shift.value);
+#else
+        // PIO step parallel parameters init
         pio_steps.length = (uint32_t)(10.0f * (settings->steppers.pulse_microseconds)) - 1;
         pio_steps.delay = (uint32_t)(10.0f * (settings->steppers.pulse_delay_microseconds)) - 1;
-        pio_steps.reset = settings->steppers.step_invert.mask;
+        for(int i = 0; i < N_AXIS; i++)
+        {
+            gpio_set_outover(STEP_PINS_BASE + i, ((settings->steppers.step_invert.mask & 1<<i) ? GPIO_OVERRIDE_INVERT : GPIO_OVERRIDE_NORMAL));   
+        }
+        gpio_set_outover(X_LIMIT_PIN, ((settings->steppers.dir_invert.mask & 0x01) ? GPIO_OVERRIDE_INVERT : GPIO_OVERRIDE_NORMAL));
+        gpio_set_outover(Y_LIMIT_PIN, ((settings->steppers.dir_invert.mask & 0x02) ? GPIO_OVERRIDE_INVERT : GPIO_OVERRIDE_NORMAL));
+        gpio_set_outover(Z_LIMIT_PIN, ((settings->steppers.dir_invert.mask & 0x04) ? GPIO_OVERRIDE_INVERT : GPIO_OVERRIDE_NORMAL));
+  #if N_AXIS > 3        
+        gpio_set_outover(A_LIMIT_PIN, ((settings->steppers.dir_invert.mask & 0x08) ? GPIO_OVERRIDE_INVERT : GPIO_OVERRIDE_NORMAL));
+  #endif
+#endif
+
+//        pio_steps.reset = settings->steppers.step_invert.mask;
 
         // Set the GPIO interrupt handler, the pin doesn't matter for now
         gpio_set_irq_enabled_with_callback(0, 0, false, gpio_int_handler); 
@@ -801,8 +857,8 @@ void settings_changed (settings_t *settings)
 #endif
 
 #if KEYPAD_ENABLE
-    gpio_set_irq_enabled_with_callback(KEYPAD_STROBE_PIN, GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL, true, gpio_int_handler);
-    gpio_pull_up(KEYPAD_STROBE_PIN);
+        gpio_set_irq_enabled_with_callback(KEYPAD_STROBE_PIN, GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL, true, gpio_int_handler);
+        gpio_pull_up(KEYPAD_STROBE_PIN);
 #endif
 
         /***************************
@@ -834,20 +890,23 @@ void settings_changed (settings_t *settings)
 // Initializes MCU peripherals for Grbl use
 static bool driver_setup (settings_t *settings)
 {
- // Stepper init
+ // Stepper init    
+    timer = pio_add_program(pio1, &stepper_timer_program);
+    stepper_timer_program_init(pio1, 0, timer, 12.5f); // 10MHz
 
+#if STEPPER_OUTMODE == GPIO_PIO_SHIFT
+    pulse = pio_add_program(pio0, &step_shift_program);
+    step_pulse_program_init(pio0, 0, pulse, STEPPER_SHIFT_DATA_PIN, STEPPER_SHIFT_CLOCK_PIN);
+#else
     gpio_init_mask(DIRECTION_MASK|STEPPERS_DISABLE_MASK);
     gpio_set_dir_out_masked(DIRECTION_MASK|STEPPERS_DISABLE_MASK);
 
     pulse = pio_add_program(pio0, &step_pulse_program);
-    timer = pio_add_program(pio1, &stepper_timer_program);
-
     step_pulse_program_init(pio0, 0, pulse, STEP_PINS_BASE, N_AXIS);
-    stepper_timer_program_init(pio1, 0, timer, 12.5f); // 10MHz
+#endif    
 
     irq_set_exclusive_handler(PIO1_IRQ_0, stepper_int_handler);
     irq_set_enabled(PIO1_IRQ_0, true);
-
 
  // Limit pins init
 
@@ -954,8 +1013,11 @@ bool driver_init (void)
     hal.stepper.go_idle = stepperGoIdle;
     hal.stepper.enable = stepperEnable;
     hal.stepper.cycles_per_tick = stepperCyclesPerTick;
+#if STEPPER_OUTMODE == GPIO_PIO_SHIFT    
+    hal.stepper.pulse_start = stepperPulseShift;
+#else
     hal.stepper.pulse_start = stepperPulseStart;
-
+#endif
     hal.limits.enable = limitsEnable;
     hal.limits.get_state = limitsGetState;
 
