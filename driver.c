@@ -291,8 +291,8 @@ static void stepperEnable (axes_signals_t enable)
     #endif
     ioexpand_out(io_expander);
   #elif STEPPERS_DISABLE_OUTMODE == GPIO_PIO_SHIFT
-    pio_steps_shift.value ^= (settings.steppers.enable_invert.mask << 12) & 0x0000F000;
-    
+    pio_steps_shift.value ^= (enable.mask << 12) & 0x0000F000;
+    pio_sm_put(pio0, 0, pio_steps_shift.value);
   #else
     gpio_put(STEPPERS_DISABLE_PIN, enable.x);
   #endif
