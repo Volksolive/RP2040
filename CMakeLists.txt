@@ -20,6 +20,7 @@ add_executable(grblHAL
  i2c.c
  PCA9654E.c
  pico_cnc.c
+ m10nc02.c
  btt_skr_pico_10.c
  ioports.c
  tmc_uart.c

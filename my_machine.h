@@ -21,6 +21,7 @@
 
 // NOTE: Only one board may be enabled!
 // If none is enabled pin mappings from generic_map.h will be used.
+#define BOARD_M10NC02
 //#define BOARD_PICO_CNC
 //#define BOARD_PICOBOB
 //#define BOARD_BTT_SKR_PICO_10 // incomplete and untested!
@@ -35,6 +36,7 @@
 #define USB_SERIAL_CDC       1 // Serial communication via native USB.
 #endif
 //#define SAFETY_DOOR_ENABLE   1 // Enable safety door input.
+#define N_AXIS                 6
 //#define BLUETOOTH_ENABLE     1 // Set to 1 for HC-05 module.
 //#define SDCARD_ENABLE        1 // Run gcode programs from SD card.
 //#define MPG_ENABLE           1 // Enable MPG interface. Requires serial port and one handshake pin.

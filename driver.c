@@ -890,6 +890,7 @@ probe_state_t probeGetState (void)
 // Static spindle (off, on cw & on ccw)
 inline static void spindle_off (void)
 {
+#ifdef SPINDLE_ENABLE_PIN
 #if OUT_SHIFT_REGISTER
     out_sr.spindle_ena = settings.spindle.invert.on;
     out_sr16_write(pio1, 1, out_sr.value);
@@ -897,14 +898,14 @@ inline static void spindle_off (void)
     ioex_out(SPINDLE_ENABLE_PIN) = settings.spindle.invert.on;
     ioexpand_out(io_expander);
 #else
-    #ifdef SPINDLE_ENABLE_PIN
     DIGITAL_OUT(SPINDLE_ENABLE_BIT, Off);
-    #endif
+#endif
 #endif
 }
 
 inline static void spindle_on (void)
 {
+#ifdef SPINDLE_ENABLE_PIN
 #if OUT_SHIFT_REGISTER
     out_sr.spindle_ena = !settings.spindle.invert.on;
     out_sr16_write(pio1, 1, out_sr.value);
@@ -912,17 +913,18 @@ inline static void spindle_on (void)
     ioex_out(SPINDLE_ENABLE_PIN) = !settings.spindle.invert.on;
     ioexpand_out(io_expander);
 #else
-    #ifdef SPINDLE_ENABLE_PIN
     DIGITAL_OUT(SPINDLE_ENABLE_BIT, On);
-    #endif
+#endif
 #endif
 #if SPINDLE_SYNC_ENABLE
     spindleDataReset();
 #endif
+
 }
 
 inline static void spindle_dir (bool ccw)
 {
+#ifdef SPINDLE_DIRECTION_PIN
 #if OUT_SHIFT_REGISTER
     out_sr.spindle_dir = ccw ^ settings.spindle.invert.ccw;
     out_sr16_write(pio1, 1, out_sr.value);
@@ -932,10 +934,9 @@ inline static void spindle_dir (bool ccw)
         ioexpand_out(io_expander);
     }
 #else
-    #ifdef SPINDLE_DIRECTION_PIN
     if(hal.driver_cap.spindle_dir)
         DIGITAL_OUT(SPINDLE_DIRECTION_BIT, ccw);
-    #endif
+#endif
 #endif
 }
 
@@ -1004,6 +1005,7 @@ static spindle_state_t spindleGetState (void)
 {
     spindle_state_t state = {settings.spindle.invert.mask};
 
+#ifdef SPINDLE_DIRECTION_PIN
 #if OUT_SHIFT_REGISTER
     state.on = out_sr.spindle_ena;
     state.ccw = out_sr.spindle_dir;
@@ -1014,12 +1016,9 @@ static spindle_state_t spindleGetState (void)
     state.ccw = hal.driver_cap.spindle_dir && ioex_out(SPINDLE_DIRECTION_PIN);
     state.value ^= settings.spindle.invert.mask;
 #else
-    #ifdef SPINDLE_DIRECTION_PIN
     state.on = DIGITAL_IN(SPINDLE_ENABLE_BIT);
-    #endif
-    #ifdef SPINDLE_DIRECTION_PIN
     state.ccw = hal.driver_cap.spindle_dir && DIGITAL_IN(SPINDLE_DIRECTION_BIT);
-    #endif
+#endif
 #endif
 
     return state;
@@ -1072,10 +1071,13 @@ static void spindlePulseOn (uint_fast16_t pulse_length)
 // Start/stop coolant (and mist if enabled)
 static void coolantSetState (coolant_state_t mode)
 {
+#ifdef COOLANT_FLOOD_PIN
 #if OUT_SHIFT_REGISTER
     mode.value ^= settings.coolant_invert.mask;
     out_sr.flood_ena = mode.flood;
+    #ifdef COOLANT_MIST_PIN
     out_sr.mist_ena = mode.mist;
+    #endif
     out_sr16_write(pio1, 1, out_sr.value);
 #elif COOLANT_OUTMODE == GPIO_IOEXPAND
     mode.value ^= settings.coolant_invert.mask;
@@ -1085,12 +1087,11 @@ static void coolantSetState (coolant_state_t mode)
     #endif
     ioexpand_out(io_expander);
 #else
-    #ifdef COOLANT_FLOOD_PIN
     DIGITAL_OUT(COOLANT_FLOOD_BIT, mode.flood);
-    #endif
     #ifdef COOLANT_MIST_PIN
     DIGITAL_OUT(COOLANT_MIST_BIT, mode.mist);
     #endif
+#endif
 #endif
 }
 
@@ -1098,9 +1099,12 @@ static void coolantSetState (coolant_state_t mode)
 static coolant_state_t coolantGetState (void)
 {
     coolant_state_t state = {0};
+#ifdef COOLANT_FLOOD_PIN 
 #if OUT_SHIFT_REGISTER
     state.flood = out_sr.flood_ena;
+    #ifdef COOLANT_MIST_PIN
     state.mist = out_sr.mist_ena;
+    #endif
     state.value ^= settings.coolant_invert.mask;
 #elif COOLANT_OUTMODE == GPIO_IOEXPAND
     state.value = settings.coolant_invert.mask;
@@ -1110,12 +1114,11 @@ static coolant_state_t coolantGetState (void)
     state.value ^= settings.coolant_invert.mask;
     #endif
 #else
-    #ifdef COOLANT_FLOOD_PIN
     state.flood = DIGITAL_IN(COOLANT_FLOOD_BIT);
-    #endif
     #ifdef COOLANT_MIST_PIN
     state.mist  = DIGITAL_IN(COOLANT_MIST_BIT);
     #endif
+#endif
 #endif
 
     return state;
@@ -1339,7 +1342,7 @@ void settings_changed (settings_t *settings)
                     pullup = !settings->control_disable_pullup.safety_door_ajar;
                     input->invert = control_fei.safety_door_ajar;
                     input->active = DIGITAL_IN(input->bit);
-                    input->irq_mode = safety_door->invert ? IRQ_Mode_Low : IRQ_Mode_High);
+                    input->irq_mode = safety_door->invert ? IRQ_Mode_Low : IRQ_Mode_High;
                     break;
 #endif
                 case Input_Probe:
@@ -1602,7 +1605,7 @@ static bool driver_setup (settings_t *settings)
 
 #if OUT_SHIFT_REGISTER
     pio_offset = pio_add_program(pio1, &out_sr16_program);
-    out_sr16_program_init(pio1, 1, pio_offset, OUT_SR_DATA_PIN, OUT_SR_SCK_PIN);
+    out_sr16_program_init(pio1, 1, pio_offset, OUT_SR_DATA_PIN, OUT_SR_SCK_PIN, OUT_SR_LCK_PIN);
 #endif
 
 #if SDCARD_ENABLE

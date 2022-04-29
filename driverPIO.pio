@@ -224,30 +224,32 @@ static inline void sr_hold_set(PIO pio, uint32_t sm, uint32_t period) {
 ;
 .program out_sr16
 .define public T3 5     ; Shift register clock and latch pulse length
-.side_set 2
+.side_set 1
     pull block          side 0x0
     set y, 15           side 0x0
 loop1:
     out pins, 1         side 0x0 [T3]
     jmp y-- loop1       side 0x1 [T3]
-    set y, 0            side 0x2 [T3]
+    set pins, 1         side 0x0 [T3]
+    set pins, 0         side 0x0 
 
 % c-sdk {
 #include "hardware/gpio.h"
-static inline void out_sr16_program_init(PIO pio, uint32_t sm, uint32_t offset, uint32_t dataPin, uint32_t bckPin) {
+static inline void out_sr16_program_init(PIO pio, uint32_t sm, uint32_t offset, uint32_t dataPin, uint32_t clkPin, uint32_t lckPin) {
  
-    uint32_t mask = (3u << bckPin) | (1u << dataPin);
+    uint32_t mask = (1u << lckPin) | (1u << clkPin) | (1u << dataPin);
     pio_sm_config c = out_sr16_program_get_default_config(offset);
  
     sm_config_set_out_pins(&c, dataPin, 1);
-    sm_config_set_sideset_pins(&c, bckPin);
+    sm_config_set_set_pins(&c, lckPin, 1);
+    sm_config_set_sideset_pins(&c, clkPin);
     sm_config_set_clkdiv(&c, 1);
 
     pio_sm_set_pins_with_mask(pio, sm, mask, mask);
     pio_sm_set_pindirs_with_mask(pio, sm, mask, mask);
     pio_gpio_init(pio, dataPin);
-    pio_gpio_init(pio, bckPin);
-    pio_gpio_init(pio, bckPin + 1);
+    pio_gpio_init(pio, lckPin);
+    pio_gpio_init(pio, clkPin);
     sm_config_set_fifo_join(&c, PIO_FIFO_JOIN_TX);
     pio_sm_init(pio, sm, offset, &c);
     pio_sm_set_enabled(pio, sm, true);
