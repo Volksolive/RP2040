@@ -56,10 +56,9 @@ typedef union {
 } output_sr_t;
 
 typedef union {
-    uint8_t value;
+    uint16_t value;
     struct {
-        uint16_t unused  :4,
-                 m5_dir  :1,
+        uint16_t m5_dir  :1,
                  m4_dir  :1,
                  m3_dir  :1,
                  z_dir   :1,
@@ -70,7 +69,8 @@ typedef union {
                  m3_step :1,
                  z_step  :1,
                  y_step  :1,
-                 x_step  :1;
+                 x_step  :1,
+                 unused  :4;
     };
 } step_dir_t;
 
@@ -79,7 +79,6 @@ typedef union {
     struct {
         step_dir_t set;
         step_dir_t reset;
-        uint16_t unused;
     };
 } step_dir_sr_t;
 
@@ -92,7 +91,7 @@ typedef union {
 #define OUT_SHIFT_REGISTER  16
 #define OUT_SR_DATA_PIN     7
 #define OUT_SR_SCK_PIN      6
-#define OUT_SR_LCK_PIN      8 
+#define OUT_SR_LCK_PIN      8
 
 #define AUX_N_OUT           8
 #define AUX_OUT_MASK        0xFF

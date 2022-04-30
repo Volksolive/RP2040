@@ -344,10 +344,10 @@ static output_signal_t outputpin[] = {
     { .id = Output_StepA,           .port = GPIO_SR8,  .pin = 3,  .group = PinGroup_StepperStep },
 #endif
 #ifdef B_AXIS
-    { .id = Output_StepB,           .port = GPIO_SR8,  .pin = 3,  .group = PinGroup_StepperStep },
+    { .id = Output_StepB,           .port = GPIO_SR8,  .pin = 4,  .group = PinGroup_StepperStep },
 #endif
 #ifdef C_AXIS
-    { .id = Output_StepC,           .port = GPIO_SR8,  .pin = 3,  .group = PinGroup_StepperStep },
+    { .id = Output_StepC,           .port = GPIO_SR8,  .pin = 5,  .group = PinGroup_StepperStep },
 #endif
 #ifdef X2_STEP_PIN
     { .id = Output_StepX_2,         .port = GPIO_SR8,  .pin = 3,  .group = PinGroup_StepperStep },
@@ -366,10 +366,10 @@ static output_signal_t outputpin[] = {
     { .id = Output_DirA,            .port = GPIO_SR8,  .pin = 7,  .group = PinGroup_StepperDir },
 #endif
 #ifdef B_AXIS
-    { .id = Output_DirB,            .port = GPIO_SR8,  .pin = 7,  .group = PinGroup_StepperDir },
+    { .id = Output_DirB,            .port = GPIO_SR8,  .pin = 8,  .group = PinGroup_StepperDir },
 #endif
 #ifdef C_AXIS
-    { .id = Output_DirC,            .port = GPIO_SR8,  .pin = 7,  .group = PinGroup_StepperDir },
+    { .id = Output_DirC,            .port = GPIO_SR8,  .pin = 9,  .group = PinGroup_StepperDir },
 #endif
 #ifdef X2_DIRECTION_PIN
     { .id = Output_DirX_2,          .port = GPIO_SR8,  .pin = 7,  .group = PinGroup_StepperDir },
@@ -514,7 +514,8 @@ static void stepperEnable (axes_signals_t enable)
     ioex_out(STEPPERS_DISABLEZ_PIN) = enable.z;
     #endif
     ioexpand_out(io_expander);
-  #elif OUT_SHIFT_REGISTER
+  #endif
+#elif OUT_SHIFT_REGISTER
     out_sr.x_ena = enable.x;
    #ifdef X2_ENABLE_PIN
     out_sr.m3_ena = enable.x;
@@ -530,10 +531,15 @@ static void stepperEnable (axes_signals_t enable)
    #ifdef A_ENABLE_PIN
     out_sr.m3_ena = enable.a;
    #endif
+   #ifdef B_ENABLE_PIN
+    out_sr.m4_ena = enable.b;
+   #endif
+   #ifdef C_ENABLE_PIN
+    out_sr.m5_ena = enable.c;
+   #endif
     out_sr16_write(pio1, 1, out_sr.value);
-  #else
+#else
     gpio_put(STEPPERS_ENABLE_PIN, enable.x);
-  #endif
 #endif
 }
 
@@ -587,7 +593,14 @@ inline static __attribute__((always_inline)) void stepperSetStepOutputs (axes_si
   #ifdef A_STEP_PIN
     sd_sr.set.m3_step = step_outbits_1.a;
   #endif
-    step_dir_sr4_write(pio0, 0, sd_sr.value);
+  #ifdef B_STEP_PIN
+    sd_sr.set.m4_step = step_outbits_1.b;
+  #endif
+  #ifdef C_STEP_PIN
+    sd_sr.set.m5_step = step_outbits_1.c;
+  #endif
+    shift_step_dir_sr_write(pio0, 0, sd_sr.reset, sd_sr.set);
+    gen_step_dir_sr_write(pio0, 1, pio_steps.length, pio_steps.delay);
 #else
     pio_steps.set = step_outbits_1.mask ^ settings.steppers.step_invert.mask;
   #ifdef X2_STEP_PIN
@@ -653,7 +666,14 @@ inline static __attribute__((always_inline)) void stepperSetStepOutputs (axes_si
   #ifdef A_STEP_PIN
     sd_sr.set.m3_step = step_outbits.a;
   #endif
-    step_dir_sr4_write(pio0, 0, sd_sr.value);
+  #ifdef B_STEP_PIN
+    sd_sr.set.m4_step = step_outbits.b;
+  #endif
+  #ifdef C_STEP_PIN
+    sd_sr.set.m5_step = step_outbits.c;
+  #endif
+    shift_step_dir_sr_write(pio0, 0, sd_sr.reset.value, sd_sr.set.value);
+    gen_step_dir_sr_write(pio0, 1, pio_steps.length, pio_steps.delay);
 #else
     pio_steps.set = step_outbits.mask ^ settings.steppers.step_invert.mask;
   #ifdef X2_STEP_PIN
@@ -1239,8 +1259,6 @@ void settings_changed (settings_t *settings)
         pio_steps.length = (uint32_t)(10.0f * (settings->steppers.pulse_microseconds - 0.8f));
         pio_steps.delay = settings->steppers.pulse_delay_microseconds <= 0.8f
                            ? 2 : (uint32_t)(10.0f * (settings->steppers.pulse_delay_microseconds - 0.8f));
-        sr_delay_set(pio0, 1, pio_steps.delay);
-        sr_hold_set(pio0, 2, pio_steps.length);
         sd_sr.reset.x_step = settings->steppers.step_invert.x;
   #ifdef X2_DIRECTION_PIN
         sd_sr.reset.m3_step = settings->steppers.step_invert.x;
@@ -1342,7 +1360,7 @@ void settings_changed (settings_t *settings)
                     pullup = !settings->control_disable_pullup.safety_door_ajar;
                     input->invert = control_fei.safety_door_ajar;
                     input->active = DIGITAL_IN(input->bit);
-                    input->irq_mode = safety_door->invert ? IRQ_Mode_Low : IRQ_Mode_High;
+                    input->irq_mode = safety_door->invert ? IRQ_Mode_Low : IRQ_Mode_High);
                     break;
 #endif
                 case Input_Probe:
@@ -1590,14 +1608,24 @@ static bool driver_setup (settings_t *settings)
     step_pulse_program_init(pio0, z_step_sm, pio_offset, Z_STEP_PIO_PIN, 1);
   #endif
 #elif SD_SHIFT_REGISTER
-    pio_offset = pio_add_program(pio0, &step_dir_sr4_program);
-    step_dir_sr4_program_init(pio0, 0, pio_offset, SD_SR_DATA_PIN, SD_SR_SCK_PIN);
+    uint32_t motorNumber = 6;
 
-    pio_offset = pio_add_program(pio0, &sr_delay_program);
-    sr_delay_program_init(pio0, 1, pio_offset,  11.65f);
+  #ifdef M7_DIRECTION_PIN
+    motorNumber = 8;
+  #elif M6_DIRECTION_PIN
+    motorNumber = 7;
+  #elif C_DIRECTION_PIN
+    motorNumber = 6;
+  #elif B_DIRECTION_PIN
+    motorNumber = 5;
+  #elif A_DIRECTION_PIN || X2_DIRECTION_PIN || Y2_DIRECTION_PIN || Z2_DIRECTION_PIN
+    motorNumber = 4;
+  #endif
+    pio_offset = pio_add_program(pio0, &shift_step_dir_sr_program);
+    shift_step_dir_sr_program_init(pio0, 0, pio_offset, SD_SR_DATA_PIN, SD_SR_SCK_PIN, motorNumber);
 
-    pio_offset= pio_add_program(pio0, &sr_hold_program);
-    sr_hold_program_init(pio0, 2, pio_offset, 11.65f);
+    pio_offset = pio_add_program(pio0, &gen_step_dir_sr_program);
+    gen_step_dir_sr_program_init(pio0, 1, pio_offset, 11.65f);
 #else
     step_pulse_sm = pio_add_program(pio0, &step_pulse_program);
     step_pulse_program_init(pio0, 0, step_pulse_sm, STEP_PINS_BASE, N_AXIS + N_GANGED);

@@ -107,6 +107,88 @@ static inline void step_pulse_generate(PIO pio, uint32_t sm, uint32_t stepPulse)
 }
 %}
 
+; 
+; shift_step_dir_sr: shifts dir signals and step pulses. The delays between each shift is timed by gen_step_dir_sr program below. 
+;                    the wrap_target allows to configure the number of shifting only once, the SM will always wrap after the target
+;
+
+.program shift_step_dir_sr
+.define public T1 5     ; Shift register clock and latch pulse length
+.side_set 2
+    
+    pull block      side 0x0        ; pull the number of shift to do from FIFO = number of axis (8 shift = 4 axis, 12 shift = 6 axis).
+    out x, 4        side 0x0        ; put the number of shift in register x
+.wrap_target                        
+    wait 1 irq 4    side 0x0        ; wait for the gen_step_dir_sr program signal before shifting
+    pull block      side 0x0        ; pull the data to be shifted from FIFO
+    mov y, x        side 0x0        ; set y to the number of shift to do stored in x
+loop:
+    out pins, 1     side 0x0 [T1]   ; shift 1 bit and reset clock
+    jmp y-- loop    side 0x1 [T1]   ; jump as long as there is bit to be shifted and clock
+    irq set 5       side 0x2 [T1]   ; when shifting complete send signal to gen_step_dir_sr program and reset clock and set latch
+.wrap
+
+% c-sdk {
+#include "hardware/gpio.h"
+static inline void shift_step_dir_sr_program_init(PIO pio, uint32_t sm, uint32_t offset, uint32_t dataPin, uint32_t bckPin, uint32_t motorNum) {
+    pio_sm_config c = shift_step_dir_sr_program_get_default_config(offset);
+    sm_config_set_out_pins(&c, dataPin, 1);
+    sm_config_set_sideset_pins(&c, bckPin);
+    sm_config_set_clkdiv(&c, 1);
+
+    pio_sm_set_pins_with_mask(pio, sm, (3u << bckPin) | (1u << dataPin), (3u << bckPin) | (1u << dataPin));
+    pio_sm_set_pindirs_with_mask(pio, sm, (3u << bckPin) | (1u << dataPin), (3u << bckPin) | (1u << dataPin));
+    pio_gpio_init(pio, dataPin);
+    pio_gpio_init(pio, bckPin);
+    pio_gpio_init(pio, bckPin + 1);
+
+    pio_sm_init(pio, sm, offset, &c);
+    pio_sm_set_enabled(pio, sm, true);
+    pio_sm_put(pio,sm, ((motorNum*2) - 1)); // Set the number of shifting needed = number of motor * 2 step & dir signals - 1
+}
+
+static inline void shift_step_dir_sr_write(PIO pio, uint32_t sm, uint32_t dir, uint32_t step) {
+
+    pio_sm_put(pio, sm, dir);       // dir + step reset
+    pio_sm_put(pio, sm, step);      // dir + step set
+    pio_sm_put(pio, sm, dir);       // dir + step reset
+}
+%}
+
+;
+; gen_step_dir_sr: adds dir to step pulse delay for shift_step_dir_sr above and control when to shift signals
+;
+
+.program gen_step_dir_sr
+    pull block
+    set y, 2            ; Set register y to the number of shifting needed
+loop:
+    irq set 4           ; Signal the shift_step_dir_program to start shifting
+    out x, 8            ; save the delay in register x
+    wait 1 irq 5        ; wait for signal from shift_step_dir_program that all bits have been shifted
+delay:    
+    jmp x-- delay       ; execute the delay 
+    jmp y-- loop        ; loop until all steps and dir signals are shifted out.
+
+% c-sdk {
+static inline void gen_step_dir_sr_program_init(PIO pio, uint32_t sm, uint32_t offset, float div) {
+    pio_sm_config c = gen_step_dir_sr_program_get_default_config(offset);
+
+    // Load our configuration, and jump to the start of the program
+    pio_sm_init(pio, sm, offset, &c);
+    // Set the clock divider
+    pio_sm_set_clkdiv(pio, sm, div);
+    pio_sm_set_enabled(pio, sm, true);
+}
+
+static inline void gen_step_dir_sr_write(PIO pio, uint32_t sm, uint32_t dirDelay, uint32_t stepPulse) {
+
+    uint32_t tempo = (((stepPulse << 8) & 0x0000FF00) + (dirDelay & 0x000000FF));
+
+    pio_sm_put(pio, sm, tempo);
+}
+%}
+
 ;
 ; step_dir_sr4: Generate dir signals and step pulses for up to 4 axes with settable delay and settable pulse length
 ;               via a single 74HC595 shift register. Delay and pulse length timings are handled by separate programs.
